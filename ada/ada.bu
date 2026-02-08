@@ -104,10 +104,52 @@ storage:
           [Service]
           Type=oneshot
           RemainAfterExit=yes
-          ExecStart=/usr/bin/bash -c 'curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_START="true" %K3S_INSTALL_ARGS% sh -'
+          ExecStart=/usr/bin/bash -c '/usr/local/bin/install-k3s.bash %ROLE%'
           
           [Install]
           WantedBy=multi-user.target
+
+    - path: "/usr/local/bin/install-k3s.bash"
+      mode: 0644
+      contents:
+        inline: |
+          #!/usr/bin/bash
+          
+          # Check if role argument is provided
+          if [ -z "$1" ]; then
+            echo "Error: Role argument required"
+            echo "Usage: $0 <role>"
+            echo "Available roles: master, server, agent"
+            exit 1
+          fi
+            
+          ROLE="$1"
+          
+          # Process based on role
+          case "$ROLE" in
+          master)
+            echo "Installing K3s as master..."
+            curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_START="true" INSTALL_K3S_EXEC="server" sh -
+          ;;
+          
+          server)
+            echo "Installing K3s as server..."
+            curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_START="true" K3S_URL="https://%CLUSTER_MASTER_ADDR%:6443" INSTALL_K3S_EXEC="server" sh -
+          ;;
+          
+          agent)
+            echo "Installing K3s as agent..."
+            curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_START="true" K3S_URL="https://%CLUSTER_MASTER_ADDR%:6443" INSTALL_K3S_EXEC="agent" sh -
+          ;;
+          
+          *)
+            echo "Error: Invalid role '$ROLE'"
+            echo "Available roles: master, server, agent"
+            exit 1
+          ;;
+          esac
+
+          echo "K3s installation complete for role: $ROLE"
 
 systemd:
   units:
