@@ -23,10 +23,8 @@ jobs:
           chmod +x butane
           sudo mv butane /usr/local/bin/
 
-      - run: cd ada
-
-      - name: Run Make
-        run: make all
+      - name: make Ada
+        run: cd ./ada && make
 
       - name: Create Release and Upload Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -36,10 +34,10 @@ jobs:
           gh release create ${{ github.ref_name }} \
             --title "Release ${{ github.ref_name }}" \
             --generate-notes \
-            ada0.ign ada1.ign ada2.ign ada3.ign ada4.ign
+            ada/ada0.ign ada/ada1.ign ada/ada2.ign ada/ada3.ign ada/ada4.ign
 
       - name: Upload Artifacts (Action Run)
         uses: actions/upload-artifact@v4
         with:
           name: ignition-files
-          path: "*.ign"
+          path: "ada/*.ign"
