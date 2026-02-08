@@ -139,6 +139,11 @@ storage:
           
           agent)
             echo "Installing K3s as agent..."
+          
+            # remove all server-specific config files
+            rm -rf /etc/rancher/k3s/config.yaml.d/*server*.yaml
+          
+            # install k3s as an agent
             curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_START="true" K3S_URL="https://%CLUSTER_MASTER_ADDR%:6443" INSTALL_K3S_EXEC="agent" sh -
           ;;
           
