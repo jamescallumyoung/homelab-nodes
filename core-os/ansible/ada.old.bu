@@ -1,0 +1,202 @@
+variant: fcos
+version: 1.5.0
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICswtcs9katJaGzwiWWot7BWx596MjHNjo8K7zxONpXV
+
+rpm-ostree:
+  packages:
+    - nfs-utils
+    - sssd-nfs-idmap
+
+storage:
+  directories:
+    # This is where we create local k8s mounts
+    - path: "/opt/k8s/volumes"
+      overwrite: true
+      mode: 0777  # 777 read,write,execute by all; so all k8s containers have permissions here
+
+  files:
+    # Set the hostname
+    - path: "/etc/hostname"
+      mode: 0644
+      contents:
+        inline: "%HOST_NAME%.lan"
+
+    # Create a common config for both k3s agents and servers
+    - path: "/etc/rancher/k3s/config.yaml.d/00_common.yaml"
+      mode: 0644
+      contents:
+        inline: |
+          # common configs used by both agents and servers
+          node-name: "%HOST_NAME%"
+          token: L3PF5nMfAZ9dZFbt
+          kubelet-arg:
+            - "--config-dir=/etc/kubernetes/kubelet.conf.d"
+
+    # Create the k3s server config used by all k3s servers; init-server and join-server
+    - path: "/etc/rancher/k3s/config.yaml.d/10_server_config.yaml"
+      mode: 0644
+      contents:
+        inline: |
+          # configs for all server nodes
+          # agent nodes should delete this file
+          
+          write-kubeconfig-mode: "0644"
+          
+          # IPv4/IPv6 network CIDRs to use for pod IPs (default: 10.42.0.0/16)
+          cluster-cidr: "10.42.0.0/16,2a02:168:48d7:ada:42::/80"
+          
+          # Tell k3s we'll run a multi-server cluster. This enables etcd, so the servers can keep in sync.
+          cluster-init: true
+          
+          # IPv4/IPv6 network CIDRs to use for service IPs (default: 10.43.0.0/16)
+          service-cidr: "10.43.0.0/16,2001:db8:ada:43::/112"
+          
+          node-ip: "%NODE_IPV4%,%NODE_IPV6%"
+          
+          # What IP should the node's control-plane services announce to other nodes so they can communicate
+          advertise-address: "%NODE_IPV4%"
+          
+          etcd-listen-peer-urls: "https://%NODE_IPV4%:2380"
+          etcd-listen-client-urls: "https://%NODE_IPV4%:2379,https://127.0.0.1:2379"
+          etcd-advertise-client-urls: "https://%NODE_IPV4%:2379"
+          
+          # Add this address to certs used by kubectl 
+          tls-san: "%HOST_NAME%.lan"
+          
+          # k3s ships servicelb, but we want to install an lb ourselves (metallb)
+          # k3s ships a default traefik ingress, but we want to use the newer gateway api
+          disable:
+            - servicelb
+            - traefik
+
+    # Create the extra k3s server config used by agents and join-servers
+    - path: "/etc/rancher/k3s/config.yaml.d/20_server_url_config.yaml"
+      mode: 0644
+      contents:
+        inline: |
+          # configs for agent nodes and join-server nodes
+          # init-server nodes should delete this file
+          
+          server: https://ada0.lan
+
+    # Create a common kubelet config
+    - path: "/etc/kubernetes/kubelet.conf.d/001-kubelet.conf"
+      mode: 0644
+      contents:
+        inline: |
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          kind: KubeletConfiguration
+          shutdownGracePeriod: "45s"
+          shutdownGracePeriodCriticalPods: "15s"
+
+    # SYSTEMD SERVICES
+
+#    # Install NFS client packages
+#    - path: "/etc/systemd/system/rpm-ostree-install-nfs.service"
+#      mode: 0644
+#      contents:
+#        inline: |
+#          [Unit]
+#          Description=Layer nfs-utils with rpm-ostree
+#          Wants=network-online.target
+#          After=network-online.target
+#          Before=zincati.service
+#          Before=k3s.service
+#          Before=k3s-agent.service
+#          ConditionPathExists=!/var/lib/%N.stamp
+#
+#          [Service]
+#          Type=oneshot
+#          RemainAfterExit=yes
+#          ExecStart=/usr/bin/rpm-ostree install --apply-live --allow-inactive nfs-utils sssd-nfs-idmap
+#          ExecStart=/bin/touch /var/lib/%N.stamp
+#          ExecStart=/bin/systemctl --no-block reboot
+#
+#          [Install]
+#          WantedBy=multi-user.target
+
+    # Template service - %i is the instance name
+    # Setup and install k3s
+    - path: "/etc/systemd/system/node-k3s-setup.service"
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=K3s setup for %i role
+          ConditionPathExists=|/etc/node-is-init-server
+          ConditionPathExists=|/etc/node-is-join-server
+          ConditionPathExists=|/etc/node-is-agent
+          ConditionPathExists=!/var/lib/%N.stamp
+          Wants=network-online.target
+          After=network-online.target
+          Before=zincati.service
+          Before=k3s.service
+          Before=k3s-agent.service
+          
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/local/bin/setup-k3s-node.sh
+          ExecStart=/usr/bin/touch /var/lib/%N.stamp
+          
+          [Install]
+          WantedBy=multi-user.target
+
+    # Setup script run by node-k3s-setup@.service
+    - path: "/usr/local/bin/setup-k3s-node.sh"
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+          
+          # Find the node-is-* file
+          NODE_FILE=$(find /etc -maxdepth 1 -name "node-is-*" -type f | head -n 1)
+          
+          if [ -z "$NODE_FILE" ]; then
+            echo "Error: No node-is-* file found in /etc"
+            exit 1
+          fi
+          
+          # Extract the role from the filename
+          ROLE=$(basename "$NODE_FILE" | sed 's/^node-is-//')
+          
+          echo "Detected node role: $ROLE"
+          
+          /usr/bin/mkdir -p /etc/rancher/k3s
+          
+          case "$ROLE" in
+            init-server)
+              echo "Setting up k3s as the initial server in the cluster"
+              /usr/bin/rm -rf /etc/rancher/k3s/config.yaml.d/20_server_url_config.yaml
+              /bin/bash -c 'exec /usr/bin/curl -sfL https://get.k3s.io | K3S_URL="" INSTALL_K3S_EXEC="server" sh -s -'
+              ;;
+            join-server)
+              echo "Setting up k3s as a server in an existing cluster"
+              /bin/bash -c 'exec /usr/bin/curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server" sh -s -'
+              ;;
+            agent)
+              echo "Setting up k3s as an agent"
+              /bin/bash -c 'exec /usr/bin/curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="agent" sh -s -'
+              ;;
+            *)
+              echo "Unknown role: $ROLE"
+              exit 1
+              ;;
+          esac
+
+systemd:
+  units:
+#    # Start the service that installs the NFS client packages
+#    # N.B.: The service's internal logic will prevent it from re-running after the first successful run
+#    - name: "rpm-ostree-install-nfs.service"
+#      enabled: true
+
+    # Start the service that installs k8s
+    # N.B.: The service's internal logic will prevent it from re-running after the first successful run
+    - name: "node-k3s-setup.service"
+      enabled: true

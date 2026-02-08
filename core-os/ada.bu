@@ -1,0 +1,159 @@
+variant: fcos
+version: 1.5.0
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICswtcs9katJaGzwiWWot7BWx596MjHNjo8K7zxONpXV
+
+storage:
+  directories:
+    # This is where we create local k8s mounts
+    - path: "/opt/k8s/volumes"
+      overwrite: true
+      mode: 0777  # 777 read,write,execute by all; so all k8s containers have permissions here
+
+  files:
+    # Set the hostname
+    - path: "/etc/hostname"
+      mode: 0644
+      contents:
+        inline: "%HOST_NAME%.lan"
+
+    - path: "/etc/NetworkManager/system-connections/enp1s0-static-ipv6.nmconnection"
+      mode: 0600
+      contents:
+        inline: |
+          [connection]
+          id=enp1s0-static-ipv6
+          type=ethernet
+          interface-name=enp1s0
+          autoconnect-priority=10
+          
+          [ipv6]
+          method=auto
+          address1=%NODE_IPV6%/64
+          addr-gen-mode=stable-privacy
+          ip6-privacy=2
+          may-fail=false
+          
+          [ipv4]
+          method=auto
+
+    # Create a common config for both k3s agents and servers
+    - path: "/etc/rancher/k3s/config.yaml.d/00_common.yaml"
+      mode: 0644
+      contents:
+        inline: |
+          # common configs used by both agents and servers
+          node-name: "%HOST_NAME%"
+          token: L3PF5nMfAZ9dZFbt
+          kubelet-arg:
+            - "--config-dir=/etc/kubernetes/kubelet.conf.d"
+
+    # Create the k3s server config used by all k3s servers; init-server and join-server
+    - path: "/etc/rancher/k3s/config.yaml.d/10_server_config.yaml"
+      mode: 0644
+      contents:
+        inline: |
+          # configs for all server nodes
+          # agent nodes should delete this file
+          
+          write-kubeconfig-mode: "0644"
+          
+          # IPv4/IPv6 network CIDRs to use for pod IPs (default: 10.42.0.0/16)
+          cluster-cidr: "%CLUSTER_CIDR%"
+          
+          # Tell k3s we'll run a multi-server cluster. This enables etcd, so the servers can keep in sync.
+          cluster-init: true
+          
+          # IPv4/IPv6 network CIDRs to use for service IPs (default: 10.43.0.0/16)
+          service-cidr: "%SERVICE_CIDR%"
+          
+          node-ip: "%NODE_IPV4%,%NODE_IPV6%"
+          
+          # What IP should the node's control-plane services announce to other nodes so they can communicate
+          advertise-address: "%NODE_IPV4%"
+          
+          etcd-listen-peer-urls: "https://%NODE_IPV4%:2380"
+          etcd-listen-client-urls: "https://%NODE_IPV4%:2379,https://127.0.0.1:2379"
+          etcd-advertise-client-urls: "https://%NODE_IPV4%:2379"
+          
+          # Add this address to certs used by kubectl 
+          tls-san: "%HOST_NAME%.lan"
+          
+          # k3s ships servicelb, but we want to install an lb ourselves (metallb)
+          # k3s ships a default traefik ingress, but we want to use the newer gateway api
+          disable:
+            - servicelb
+            - traefik
+
+    # Create a common kubelet config
+    - path: "/etc/kubernetes/kubelet.conf.d/001-kubelet.conf"
+      mode: 0644
+      contents:
+        inline: |
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          kind: KubeletConfiguration
+          shutdownGracePeriod: "45s"
+          shutdownGracePeriodCriticalPods: "15s"
+
+    # SYSTEMD SERVICES
+
+    # Install NFS client packages
+#    - path: "/etc/systemd/system/rpm-ostree-install-nfs.service"
+#      mode: 0644
+#      contents:
+#        inline: |
+#          [Unit]
+#          Description=Layer nfs-utils with rpm-ostree
+#          Wants=network-online.target
+#          After=network-online.target
+#          Before=zincati.service
+#          Before=k3s.service
+#          Before=k3s-agent.service
+#          ConditionPathExists=!/var/lib/%N.stamp
+#
+#          [Service]
+#          Type=oneshot
+#          RemainAfterExit=yes
+#          ExecStart=/usr/bin/rpm-ostree install --apply-live --allow-inactive nfs-utils sssd-nfs-idmap
+#          ExecStart=/bin/touch /var/lib/%N.stamp
+#          ExecStart=/bin/systemctl --no-block reboot
+#
+#          [Install]
+#          WantedBy=multi-user.target
+
+    # Install k3s
+    - path: "/etc/systemd/system/install-k3s.service"
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Install k3s
+          ConditionPathExists=!/usr/local/bin/k3s
+          Wants=network-online.target
+          After=network-online.target
+          Before=zincati.service
+          Before=k3s.service
+          Before=k3s-agent.service
+          
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/bin/bash -c 'curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_START="true" %K3S_INSTALL_ARGS% sh -'
+          
+          [Install]
+          WantedBy=multi-user.target
+
+systemd:
+  units:
+#    # Start the service that installs the NFS client packages
+#    # N.B.: The service's internal logic will prevent it from re-running after the first successful run
+#    - name: "rpm-ostree-install-nfs.service"
+#      enabled: true
+
+    # Start the service that installs k8s
+    # N.B.: The service's internal logic will prevent it from re-running after the first successful run
+    - name: "install-k3s.service"
+      enabled: true

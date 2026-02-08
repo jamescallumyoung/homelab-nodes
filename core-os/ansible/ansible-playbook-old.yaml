@@ -1,0 +1,45 @@
+---
+- hosts: k3s_nodes
+  become: yes
+  vars:
+    k3s_nodes:
+      - { hostname: ada0.lan, type: server, config: server-config.yaml, service: k3s }
+      - { hostname: ada3.lan, type: server, config: server-config.yaml, service: k3s }
+      - { hostname: ada1.lan, type: agent, config: agent-config.yaml, service: k3s-agent }
+      - { hostname: ada2.lan, type: agent, config: agent-config.yaml, service: k3s-agent }
+      - { hostname: ada4.lan, type: agent, config: agent-config.yaml, service: k3s-agent }
+
+  tasks:
+    - name: Prepare K3s configuration for each node
+      block:
+        - name: Create symlink for k3s {{ k3s_node.type }} configuration
+          file:
+            src: "/etc/rancher/k3s/{{ k3s_node.config }}"
+            dest: "/etc/rancher/k3s/config.yaml"
+            state: link
+            force: yes
+          when: inventory_hostname == k3s_node.hostname
+
+        - name: Install K3s {{ k3s_node.type }}
+          shell:
+            cmd: curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="{{ k3s_node.type }}" sh -s -
+            creates: /usr/local/bin/k3s
+          when: inventory_hostname == k3s_node.hostname
+
+        - name: Reboot node
+          reboot:
+            reboot_timeout: 300
+            post_reboot_delay: 30
+          when: inventory_hostname == k3s_node.hostname
+
+        - name: Enable K3s {{ k3s_node.type }} service
+          systemd:
+            name: "{{ k3s_node.service }}"
+            enabled: yes
+            state: started
+          when: inventory_hostname == k3s_node.hostname
+
+      loop: "{{ k3s_nodes }}"
+      loop_control:
+        loop_var: k3s_node
+        label: "{{ k3s_node.hostname }}"
