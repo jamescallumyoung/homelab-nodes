@@ -22,8 +22,8 @@ all: $(objects)
 %.tbu: ada.bu
 	cp $< $@
 	sed -i -e "s/%HOST_NAME%/$(hostname)/g" \
-	       -e "s/%CLUSTER_MASTER_ADDR%/$(cluster_master)|g" \
-	       -e "s/%ROLE%/$(role)|g" \
+	       -e "s/%CLUSTER_MASTER_ADDR%/$(cluster_master)/g" \
+	       -e "s/%ROLE%/$(role)/g" \
 	       $@
 
 .PHONY: clean
