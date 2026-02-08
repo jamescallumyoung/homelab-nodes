@@ -20,26 +20,6 @@ storage:
       contents:
         inline: "%HOST_NAME%.lan"
 
-    - path: "/etc/NetworkManager/system-connections/enp1s0-static-ipv6.nmconnection"
-      mode: 0600
-      contents:
-        inline: |
-          [connection]
-          id=enp1s0-static-ipv6
-          type=ethernet
-          interface-name=enp1s0
-          autoconnect-priority=10
-          
-          [ipv6]
-          method=auto
-          address1=%NODE_IPV6%/64
-          addr-gen-mode=stable-privacy
-          ip6-privacy=2
-          may-fail=false
-          
-          [ipv4]
-          method=auto
-
     # Create a common config for both k3s agents and servers
     - path: "/etc/rancher/k3s/config.yaml.d/00_common.yaml"
       mode: 0644
@@ -60,32 +40,15 @@ storage:
           # agent nodes should delete this file
           
           write-kubeconfig-mode: "0644"
-          
-          # IPv4/IPv6 network CIDRs to use for pod IPs (default: 10.42.0.0/16)
-          cluster-cidr: "%CLUSTER_CIDR%"
-          
+
           # Tell k3s we'll run a multi-server cluster. This enables etcd, so the servers can keep in sync.
           cluster-init: true
-          
-          # IPv4/IPv6 network CIDRs to use for service IPs (default: 10.43.0.0/16)
-          service-cidr: "%SERVICE_CIDR%"
-          
-          node-ip: "%NODE_IPV4%,%NODE_IPV6%"
-          
-          # What IP should the node's control-plane services announce to other nodes so they can communicate
-          advertise-address: "%NODE_IPV4%"
-          
-          etcd-listen-peer-urls: "https://%NODE_IPV4%:2380"
-          etcd-listen-client-urls: "https://%NODE_IPV4%:2379,https://127.0.0.1:2379"
-          etcd-advertise-client-urls: "https://%NODE_IPV4%:2379"
           
           # Add this address to certs used by kubectl 
           tls-san: "%HOST_NAME%.lan"
           
-          # k3s ships servicelb, but we want to install an lb ourselves (metallb)
           # k3s ships a default traefik ingress, but we want to use the newer gateway api
           disable:
-            - servicelb
             - traefik
 
     # Create a common kubelet config
