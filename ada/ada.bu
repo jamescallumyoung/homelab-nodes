@@ -110,7 +110,7 @@ storage:
           WantedBy=multi-user.target
 
     - path: "/usr/local/bin/install-k3s.bash"
-      mode: 0644
+      mode: 0755
       contents:
         inline: |
           #!/usr/bin/bash
